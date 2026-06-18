@@ -1,0 +1,13 @@
+__pycache__/
+.venv/
+.env
+data/*
+images/*
+vectordb/*
+!data/.gitkeep
+!images/.gitkeep
+!vectordb/.gitkeep
+*.pyc
+*.pyo
+dist/
+
