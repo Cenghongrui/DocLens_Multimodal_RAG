@@ -6,6 +6,7 @@ from typing import List, Optional
 class ChatRequest(BaseModel):
     """POST /api/chat 的请求体"""
     message: str
+    source: Optional[str] = None  # 可选，指定文档名则只在该文档内检索
 
 
 # ─── 响应 ───

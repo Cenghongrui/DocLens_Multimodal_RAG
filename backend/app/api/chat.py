@@ -15,7 +15,10 @@ async def chat(request: ChatRequest):
     """对话：检索 + 生成"""
 
     # 检索
-    retrieved_docs = await retrieve(request.message)
+    retrieved_docs = await retrieve(
+        request.message,
+        source=request.source,
+    )
 
     # 生成
     answer = await generate(request.message, retrieved_docs)

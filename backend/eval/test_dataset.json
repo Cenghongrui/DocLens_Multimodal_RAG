@@ -1,0 +1,22 @@
+[
+  {
+    "question": "本文的核心贡献和主要创新点是什么？",
+    "ground_truth": ""
+  },
+  {
+    "question": "论文中使用了什么方法或框架来解决研究问题？",
+    "ground_truth": ""
+  },
+  {
+    "question": "实验部分用了哪些数据集？主要对比了哪些基线方法？",
+    "ground_truth": ""
+  },
+  {
+    "question": "本文的实验结果表明，所提出的方法相比 Baseline 提升了多少？",
+    "ground_truth": ""
+  },
+  {
+    "question": "论文的研究背景是什么？主要针对什么领域的问题？",
+    "ground_truth": ""
+  }
+]

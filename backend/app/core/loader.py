@@ -18,7 +18,7 @@ def load_file(file_path: str) -> Tuple[List[Document], List[str]]:
         raise ValueError(f"不支持该文件格式: {ext}")
 
 
-def load_text(file_path: str) -> Tuple[List[Document], List[str]]:
+def load_txt(file_path: str) -> Tuple[List[Document], List[str]]:
     source = Path(file_path).name
     with open(file_path, "r", encoding="utf-8") as f:
         text = f.read()
