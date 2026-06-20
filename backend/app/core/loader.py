@@ -8,7 +8,7 @@ from langchain_core.documents import Document
 def load_file(file_path: str) -> Tuple[List[Document], List[str]]:
     ext = Path(file_path).suffix.lower() 
 
-    if ext == ".txt":
+    if ext in (".txt", ".md", ".csv"):
         return load_txt(file_path)
     elif ext == ".pdf":
         return load_pdf(file_path)

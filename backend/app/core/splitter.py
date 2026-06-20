@@ -28,6 +28,8 @@ def split_documents(documents: List[Document]) -> List[Document]:
             result.extend(chunks)
 
     for i, chunk in enumerate(result):
-        chunk.metadata["chunk_id"] = i
+        source = chunk.metadata.get("source", "unknown")
+        page = chunk.metadata.get("page", 0)
+        chunk.metadata["chunk_id"] = f"{source}_p{page}_{i}"
 
     return result
