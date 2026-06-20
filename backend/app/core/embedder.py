@@ -20,6 +20,7 @@ async_embedding_client = AsyncOpenAI(
 )
 
 
+
 async def embed_text(text: str) -> List[float]:
     """单段文本"""
     response = await async_embedding_client.embeddings.create(
@@ -31,13 +32,17 @@ async def embed_text(text: str) -> List[float]:
 
 
 async def embed_batch(texts: List[str]) -> List[List[float]]:
-    """批量文本"""
-    response = await async_embedding_client.embeddings.create(
-        model=settings.embedding_model,
-        input=texts,
-        dimensions=settings.embedding_dimension,
-    )
-    return [item.embedding for item in response.data]
+    """分批批量文本"""
+    all_embeddings = []
+    for i in range(0, len(texts), settings.embedding_batch_size):
+        batch = texts[i:i + settings.embedding_batch_size]
+        response = await async_embedding_client.embeddings.create(
+            model=settings.embedding_model,
+            input=batch,
+            dimensions=settings.embedding_dimension,
+        )
+        all_embeddings.extend(item.embedding for item in response.data)
+    return all_embeddings
 
 
 # ─── ChromaDB 连接 ───
@@ -65,13 +70,17 @@ class _EmbeddingFunction:
     """
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """批量入库用（同步）"""
-        response = embedding_client.embeddings.create(
-            model=settings.embedding_model,
-            input=texts,
-            dimensions=settings.embedding_dimension,
-        )
-        return [item.embedding for item in response.data]
+        """批量入库用（同步，分批处理）"""
+        all_embeddings = []
+        for i in range(0, len(texts), settings.embedding_batch_size):
+            batch = texts[i:i + settings.embedding_batch_size]
+            response = embedding_client.embeddings.create(
+                model=settings.embedding_model,
+                input=batch,
+                dimensions=settings.embedding_dimension,
+            )
+            all_embeddings.extend(item.embedding for item in response.data)
+        return all_embeddings
 
     def embed_query(self, text: str) -> List[float]:
         """查询用（同步）"""

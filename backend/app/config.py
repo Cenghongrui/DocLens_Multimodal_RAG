@@ -14,10 +14,11 @@ class Settings(BaseSettings):
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     # ─── 模型参数 ───
-    llm_model: str = "deepseek-v4-pro"  
+    llm_model: str = "deepseek-v4-flash"  
     vision_model: str = "qwen-vl-plus"  
     embedding_model: str = "text-embedding-v4" 
     embedding_dimension: int = 1024  # text-embedding-v4 输出 1024 维
+    embedding_batch_size: int = 10  # Qwen embedding API 单次最大 10 条
 
     # ─── 分块参数 ───
     chunk_size: int = 1000  # 每块最大字符数
