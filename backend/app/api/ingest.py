@@ -51,6 +51,10 @@ async def ingest_document(file: UploadFile = File(...)):
         vectorstore = get_or_create_collection()
         vectorstore.add_documents(chunks)
 
+        # 刷新 BM25 内存索引（新文档才能被关键词检索到）
+        from app.core.bm25_retriever import reset_bm25_index
+        reset_bm25_index()
+
         return IngestResponse(
             status="ok",
             file_name=file.filename,

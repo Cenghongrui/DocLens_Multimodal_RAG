@@ -326,6 +326,15 @@ uv run python -m eval.evaluate
 - MRR: 0.25
 - Context Precision: 0.52
 
+
+
+Context Precision:   54.00%
+  Context Recall:      62.00%
+  Faithfulness:        56.00%
+  Answer Relevancy:    82.00%
+  Hit Rate:            100.00%
+  MRR:                 1.000
+
 后面每优化一步，都跟这个基线比。
 
 ---
@@ -611,7 +620,7 @@ uv run python -c "
 from app.core.bm25_retriever import get_bm25_retriever
 r = get_bm25_retriever()
 print(f'BM25 索引文档数: {len(r.docs)}')
-res = r.search('你的测试关键词', top_k=3)
+res = r.search('实验结果', top_k=3)
 for d in res:
     print(d.metadata.get('source'), '->', d.page_content[:60])
 "
@@ -620,6 +629,25 @@ uv run python -m eval.evaluate
 ```
 
 **预期**：Context Recall（覆盖度）会明显上升，因为 BM25 补上了向量检索漏掉的精确匹配。Hit Rate 也应该涨。
+
+
+
+Context Precision:   44.00%      0.5/0.5
+  Context Recall:      42.00%
+  Faithfulness:        62.00%
+  Answer Relevancy:    72.00%
+  Hit Rate:            100.00%
+  MRR:                 1.000
+
+
+
+Total cases: 5      0.75/0.25 (提高向量检测的权重，提升明显)
+  Context Precision:   62.00%
+  Context Recall:      62.00%
+  Faithfulness:        74.00%
+  Answer Relevancy:    92.00%
+  Hit Rate:            100.00%
+  MRR:                 1.000
 
 ---
 

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     # ─── 模型参数 ───
     llm_model: str = "deepseek-v4-flash"  
+    judge_llm_model: str = "qwen3.6-flash"
     vision_model: str = "qwen-vl-plus"  
     embedding_model: str = "text-embedding-v4" 
     embedding_dimension: int = 1024  # text-embedding-v4 输出 1024 维

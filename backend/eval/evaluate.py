@@ -24,13 +24,50 @@ from app.core.retriever import retrieve
 from app.core.generator import generate
 from app.config import settings
 
+import re
+
+def _extract_keywords(text: str) -> list[str]:
+    """从 ground_truth 里抽关键词用于命中判断。
+    策略：去停用词 + 取长度>=2的中文词/英文词。
+    不用 jieba（避免引入新依赖到 eval），用简单规则即可，够用了。"""
+    if not text:
+        return []
+    # 中文：连续的 2-6 字汉字串；英文：连续字母
+    tokens = re.findall(r'[\u4e00-\u9fa5]{2,6}|[A-Za-z][A-Za-z0-9\-]{2,}', text)
+    # 停用词表（常见噪声词）
+    stop = {
+        "本文", "本文的", "我们", "通过", "使用", "采用", "基于", "方法",
+        "研究", "进行", "可以", "能够", "一个", "这种", "这个", "这些",
+        "以及", "并且", "对于", "根据", "由于", "从而", "从而",
+        "the", "and", "for", "with", "that", "this", "are", "was",
+    }
+    return [t for t in tokens if t not in stop]
+
+def compute_hit_rate_and_mrr(
+    contexts: list[str],
+    ground_truth: str,
+) -> tuple[float, float]:
+    """计算单条的 Hit Rate 和 RR（倒数排名）。
+    返回 (hit_rate, reciprocal_rank)。
+    hit_rate: 1.0 命中, 0.0 未命中
+    reciprocal_rank: 1/rank, 未命中为 0"""
+    keywords = _extract_keywords(ground_truth)
+    if not keywords:
+        return 0.0, 0.0
+
+    for rank, ctx in enumerate(contexts, start=1):
+        # 任一关键词出现在该 chunk 里，就算命中
+        if any(kw.lower() in ctx.lower() for kw in keywords):
+            return 1.0, 1.0 / rank
+    return 0.0, 0.0
+
 # Windows 下强制 stdout 用 UTF-8，避免 emoji/中文报错
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-# ─── Judge LLM  用 DeepSeek ───
+# ─── Judge LLM  用 Qwen （不同模型，消除自评偏差） ───
 judge_client = AsyncOpenAI(
-    api_key=settings.deepseek_api_key,
-    base_url=settings.deepseek_base_url,
+    api_key=settings.qwen_api_key,
+    base_url=settings.qwen_base_url,
 )
 
 EVAL_DIR = Path(__file__).parent
@@ -131,9 +168,9 @@ async def judge_one(question: str, ground_truth: str, answer: str, contexts: Lis
     for attempt in range(3):
         time.sleep(1.5)
         response = await judge_client.chat.completions.create(
-            model=settings.llm_model,
+            model=settings.judge_llm_model,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
+            temperature=0.1,
             max_tokens=2048,  # 增大，避免 reasoning + JSON 截断
         )
         raw = response.choices[0].message.content or ""
@@ -177,16 +214,18 @@ async def judge_one(question: str, ground_truth: str, answer: str, contexts: Lis
     )
 
 
-async def run_evaluation():
-    """主评估流程"""
+async def run_evaluation(source: str = None):
+    """主评估流程。source 不为 None 时，只在该文档内检索。"""
     # 1. 加载测试集
     with open(TEST_DATASET, "r", encoding="utf-8") as f:
         test_cases = json.load(f)
-    print(f"Loaded {len(test_cases)} test cases")
+    tag = f" [source={source}]" if source else ""
+    print(f"Loaded {len(test_cases)} test cases{tag}")
 
     # 2. 逐条跑 RAG 链路 + 评分
     results = []
     scores_sum = {"context_precision": 0, "context_recall": 0, "faithfulness": 0, "answer_relevancy": 0}
+    obj_sum = {"hit_rate": 0.0, "reciprocal_rank": 0.0}
 
     for i, case in enumerate(test_cases):
         q = case["question"].strip()
@@ -199,13 +238,17 @@ async def run_evaluation():
         print(f"[{i+1}/{len(test_cases)}] Q: {q}")
 
         # 检索
-        docs = await retrieve(q)
+        docs = await retrieve(q, source=source)
         contexts = [d.page_content for d in docs]
         print(f"  Retrieved {len(contexts)} chunks")
 
         # 生成
         answer = await generate(q, docs)
         print(f"  Answer: {answer[:120]}...")
+
+        # 客观指标
+        hit, rr = compute_hit_rate_and_mrr(contexts, gt)
+        print(f"  Hit={hit:.0f}  RR={rr:.3f}")
 
         # 评分
         scores = await judge_one(q, gt, answer, contexts)
@@ -217,18 +260,25 @@ async def run_evaluation():
             "ground_truth": gt,
             "answer": answer,
             "contexts": contexts,
+            "hit_rate": hit,        
+            "reciprocal_rank": rr,  
             "scores": scores.model_dump(),
         })
 
         for k in scores_sum:
             scores_sum[k] += getattr(scores, k)
 
+        obj_sum["hit_rate"] += hit
+        obj_sum["reciprocal_rank"] += rr
+
     # 3. 汇总
     n = len(results) or 1
     avg = {k: round(v / n, 3) for k, v in scores_sum.items()}
+    avg_obj = {k: round(v / n, 3) for k, v in obj_sum.items()}
     summary = {
         "total_cases": n,
         "average_scores": avg,
+        "objective_metrics": avg_obj,
         "details": results,
     }
 
@@ -244,8 +294,13 @@ async def run_evaluation():
     print(f"  Context Recall:      {avg['context_recall']:.2%}")
     print(f"  Faithfulness:        {avg['faithfulness']:.2%}")
     print(f"  Answer Relevancy:    {avg['answer_relevancy']:.2%}")
+    print(f"  Hit Rate:            {avg_obj['hit_rate']:.2%}")
+    print(f"  MRR:                 {avg_obj['reciprocal_rank']:.3f}")
     print(f"\nResults saved to: {RESULT_FILE}")
 
 
 if __name__ == "__main__":
-    asyncio.run(run_evaluation())
+    import sys
+    # 支持可选参数：python -m eval.evaluate [source_name]
+    src = sys.argv[1] if len(sys.argv) > 1 else None
+    asyncio.run(run_evaluation(source=src))
