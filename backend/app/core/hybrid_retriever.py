@@ -8,6 +8,7 @@ from langchain_core.documents import Document
 from app.config import settings
 from app.core.embedder import get_or_create_collection
 from app.core.bm25_retriever import get_bm25_retriever
+from app.core.reranker import rerank
 
 
 def _min_max_normalize(scores: list[float]) -> list[float]:
@@ -70,4 +71,14 @@ async def hybrid_retrieve(
 
     # 按融合分数排序，取 top_k
     ranked = sorted(fused.values(), key=lambda x: x["score"], reverse=True)
-    return [item["doc"] for item in ranked[:top_k]]
+    candidates = [item["doc"] for item in ranked[:candidate_k]]
+
+    # ─── cross-encoder 重排序 ───
+    try:
+        final_docs = await rerank(query, candidates, top_n=top_k)
+    except Exception as e:
+        # rerank 失败时降级：直接用混合检索的 top_k，保证可用性
+        print(f"[WARN] rerank failed, fallback to hybrid: {e}")
+        final_docs = candidates[:top_k]
+
+    return final_docs
