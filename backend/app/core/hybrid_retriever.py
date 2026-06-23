@@ -34,24 +34,43 @@ async def hybrid_retrieve(
 ) -> List[Document]:
     """混合检索主函数。"""
     if top_k is None:
-        top_k = settings.top_k
+        top_k = settings.top_k  
 
-    # ─── 第一路：向量检索 ───
+    # ─── HyDE ───
+    search_query = query
+    if settings.hyde_enabled:                    # ← 全局开关
+        from app.core.query_router import should_use_hyde
+        should_use, route_reason = await should_use_hyde(
+            query,
+            threshold=settings.hyde_route_threshold,
+        )
+        if should_use:
+            try:
+                from app.core.query_transform import hyde_transform
+                search_query = await hyde_transform(query)
+                print(f"[HyDE] ✓ {query[:40]} → {search_query[:50]}...")
+            except Exception as e:
+                print(f"[WARN] HyDE transform failed, use raw query: {e}")
+                search_query = query
+        else:
+            print(f"[HyDE] ✗ skipped: {route_reason}")
+    else:
+        print(f"[HyDE] ⊘ globally disabled (hyde_enabled=False)")
+
+    # ─── 向量检索 ───
     vectorstore = get_or_create_collection()
     filter_dict = {"source": source} if source else None
 
-    # 多召回，给融合更大候选池
-    vec_pairs = vectorstore.similarity_search_with_score(
-        query=query,
+    vec_pairs = await vectorstore.asimilarity_search_with_score(
+        query=search_query,
         k=candidate_k,
         filter=filter_dict,
     )
-    # ChromaDB 返回的是"距离"（越小越相似），转成相似度并归一化
     vec_scores_raw = [1.0 / (1.0 + dist) for _, dist in vec_pairs]
 
-    # ─── 第二路：BM25 检索 ───
+    # ─── BM25 检索 ───
     bm25 = get_bm25_retriever()
-    bm25_docs, bm25_scores_raw = bm25.search(query, top_k=candidate_k, return_scores=True)
+    bm25_docs, bm25_scores_raw = bm25.search(search_query, top_k=candidate_k, return_scores=True)
 
     # ─── 融合 ───
     # 用 chunk_id 作为唯一键，合并两路的分数

@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # ─── 检索参数 ───
     top_k: int = 5  # 每次检索返回多少个结果
 
+    # ─── HyDE 参数 ───
+    hyde_enabled: bool = True            # 全局开关：True=启用HyDE模块，False=完全关闭
+    hyde_route_threshold: float = 0.5   # 路由判断置信度阈值（低于此值不走HyDE）
+    hyde_model: str = "qwen3.6-flash"       # HyDE改写用的模型（轻量即可）
+    hyde_max_tokens: int = 200           # HyDE改写最大输出长度
+
     # ─── 路径 ───
     data_dir: str = "data/"
     image_dir: str = "images/"
