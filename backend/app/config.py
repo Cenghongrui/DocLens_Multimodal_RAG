@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # Qwen
     qwen_api_key: str
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    rerank_url: str = " https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    rerank_url: str = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
 
     # ─── 模型参数 ───
     llm_model: str = "deepseek-v4-flash"  
