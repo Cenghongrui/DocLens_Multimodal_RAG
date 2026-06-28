@@ -85,6 +85,32 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | `POST` | `/api/chat` | 对话问答 |
 | `GET` | `/api/documents` | 已入库文档列表 |
 
+### Agent 调用示例
+
+```python
+import httpx
+
+BASE = "http://localhost:8000/api"
+
+# 1. 上传文档
+with open("paper.pdf", "rb") as f:
+    resp = httpx.post(f"{BASE}/ingest", files={"file": f})
+print(resp.json())
+
+# 2. 对话问答
+resp = httpx.post(f"{BASE}/chat", json={
+    "query": "摘要中提出了什么方法？",
+    "source": "paper.pdf",  # 可选：限定文档来源
+})
+answer = resp.json()
+print(answer["answer"])
+# 输出示例："根据 [来源 1]（paper.pdf，第 1 页），本文提出了..."
+
+# 3. 查看已入库文档
+resp = httpx.get(f"{BASE}/documents")
+print(resp.json())
+```
+
 ### 运行评估
 
 ```bash
