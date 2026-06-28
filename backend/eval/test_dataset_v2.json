@@ -1,0 +1,142 @@
+[
+  {
+    "question": "人工智能（AI）这一术语是在哪一年首次提出的？",
+    "ground_truth": "1956年",
+    "type": "Simple",
+    "difficulty": "easy",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "该文章发表于哪一年的第几卷？",
+    "ground_truth": "2026年第41卷",
+    "type": "Numerical",
+    "difficulty": "easy",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "本文的通信作者邮箱是什么？",
+    "ground_truth": "pinky-zhou@qq.com",
+    "type": "Simple",
+    "difficulty": "easy",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "AI与医疗机器人的融合历程经历了哪3个阶段？",
+    "ground_truth": "规则驱动AI+机械臂、机器学习+自适应能力、DL+一体化智能",
+    "type": "Listing",
+    "difficulty": "medium",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "目前全球医疗机器人中最主要的类型是哪一种？",
+    "ground_truth": "手术机器人",
+    "type": "Simple",
+    "difficulty": "easy",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "该文章的网络首发时间具体是什么时候？",
+    "ground_truth": "2026-06-08 15:05:32",
+    "type": "Numerical",
+    "difficulty": "easy",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "根据表1，AI在医疗领域的主要应用场景包含哪些细分类别？",
+    "ground_truth": "临床辅助决策、医学影像、药物研发、医疗机器人、医疗服务",
+    "type": "Listing",
+    "difficulty": "medium",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "为什么基于深度学习的AI技术被认为是未来医疗机器人的必备配置？",
+    "ground_truth": "因为它在术中视野清晰度优化、支撑力实时反馈、术中实时数据分析等多个方面提升了设备性能",
+    "type": "Reasoning",
+    "difficulty": "medium",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "按国际机器人联合会的最新分类，医疗机器人的分类从原来的四类拓展为了哪五类？",
+    "ground_truth": "诊断、手术、康复及非侵入、实验室自动和其他",
+    "type": "Comparative",
+    "difficulty": "medium",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "如果一台手术机器人适用于普通外科、泌尿外科等腔镜下微创手术，它属于哪一类细分类？",
+    "ground_truth": "主从操作手术机器人中的腔镜手术机器人",
+    "type": "Conditional",
+    "difficulty": "medium",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "手术机器人目前已基本实现对人体哪些关键部位的全覆盖？",
+    "ground_truth": "口腔、腹腔、血管、自然腔道、骨组织和眼部",
+    "type": "Listing",
+    "difficulty": "medium",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "制约AI与医疗机器人规模化应用的主要问题有哪些？",
+    "ground_truth": "技术落地、伦理规范及监管适配等方面的问题",
+    "type": "Reasoning",
+    "difficulty": "medium",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "医疗机器人是一种集哪些系统为一体的医疗器械？",
+    "ground_truth": "信息系统、控制系统、机械系统以及影像系统",
+    "type": "Simple",
+    "difficulty": "easy",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "表1中医学影像场景下的主要应用价值包括什么？",
+    "ground_truth": "疾病筛查提高筛查效率，降低误诊/漏诊率；辅助诊断提高诊断准确性，实现疾病精准分级、分期",
+    "type": "Listing",
+    "difficulty": "medium",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "康复机器人的定义范围被拓宽后，具体包括了哪些功能？",
+    "ground_truth": "理疗、康复、复位等其他非侵入治疗功能",
+    "type": "Reasoning",
+    "difficulty": "medium",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "结合引言和1.1节，说明AI技术是如何赋能院前、院中和院后环节的？",
+    "ground_truth": "通过对医疗数据进行分析处理，在医学影像检查、疾病辅助判断、治疗方案辅助决策等场景中提升效率和准确性，从而全面赋能各环节",
+    "type": "Multi-Hop",
+    "difficulty": "hard",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "对比规则驱动AI+机械臂与DL+一体化智能两个阶段，后者在能力上有什么核心提升？",
+    "ground_truth": "后者具备了一体化智能，能进行更复杂的术中实时数据分析及决策支持，而前者为基础融合",
+    "type": "Comparative",
+    "difficulty": "hard",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "若医师需要获取关于深度学习辅助决策医疗器械软件的审评要点，应参考哪个年份发布的通告？",
+    "ground_truth": "2019年发布的《关于发布深度学习辅助决策医疗器械软件审评要点的通告》",
+    "type": "Conditional",
+    "difficulty": "medium",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "根据参考文献[43]和文档内容，人工智能医疗器械数据集通用要求的标准号是什么？",
+    "ground_truth": "YY/T 1833.2-2022",
+    "type": "Multi-Hop",
+    "difficulty": "hard",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  },
+  {
+    "question": "本文综述旨在为与AI技术深度融合的医疗机器人的哪些方面提供理论支持和实践指导？",
+    "ground_truth": "未来发展及监管",
+    "type": "Reasoning",
+    "difficulty": "hard",
+    "document": "基于深度学习的人工智能技术与医疗机器人诊疗技术融合的应用进展_王勇 (1).pdf"
+  }
+]

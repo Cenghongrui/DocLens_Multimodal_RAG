@@ -1,306 +1,356 @@
 """
-RAG 评估脚本  LLM-as-Judge
+RAGAS 评估脚本（并行版）
 
-评估维度：
-  Context Precision  检索到的文档上下文是否精确，有没有噪声
-  Context Recall     是否检索到了回答所需的所有信息
-  Faithfulness       回答是否忠实于检索到的文档（有无幻觉）
-  Answer Relevancy   回答是否切题
+优化：
+  - 阶段一：30 个 RAG 链路调用  → asyncio.gather 并发（带信号量限流）
+  - 阶段二：RAGAS 评分          → 调高内部 max_workers 并行度
 
 用法：
-  uv run python -m eval.evaluate
+控制台
+  .venv\Scripts\python.exe -X utf8 -m eval.evaluate
 """
 
 import json
 import asyncio
 import sys
+import types
+import re
+import math
+import time
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
-from openai import AsyncOpenAI
-from pydantic import BaseModel
+# ─── 必须先做 monkey-patch，再导入 ragas ───
+# RAGAS 0.4.3 无条件导入 ChatVertexAI，但它在最新 langchain-community 中已被移除
+try:
+    from langchain_google_vertexai import ChatVertexAI
+except ImportError:
+    ChatVertexAI = None
+import langchain_community.chat_models
+langchain_community.chat_models.vertexai = types.ModuleType("vertexai")
+if ChatVertexAI:
+    langchain_community.chat_models.vertexai.ChatVertexAI = ChatVertexAI
+sys.modules["langchain_community.chat_models.vertexai"] = langchain_community.chat_models.vertexai
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+from app.config import settings
 from app.core.retriever import retrieve
 from app.core.generator import generate
-from app.config import settings
 
-import re
+# ─── RAGAS ───
+from datasets import Dataset
+from ragas import evaluate as ragas_evaluate
+from ragas.run_config import RunConfig
+from ragas.metrics import (
+    faithfulness,
+    context_precision,
+    context_recall,
+)
+# ─── 配置 RAGAS 使用的 LLM ───
+# 使用 DeepSeek 做 judge（与生成模型一致，用户指定）
+from langchain_openai import ChatOpenAI
+
+ragas_llm = ChatOpenAI(
+    model=settings.llm_model,  # deepseek-v4-flash
+    api_key=settings.deepseek_api_key,
+    base_url=settings.deepseek_base_url,
+    temperature=0.1,
+    max_retries=3,
+    request_timeout=30,
+)
+
+for metric in [faithfulness, context_precision, context_recall]:
+    metric.__setattr__("llm", ragas_llm)
+
+EVAL_DIR = Path(__file__).parent
+TEST_DATASET = EVAL_DIR / "test_dataset_v2.json"
+RESULT_FILE = EVAL_DIR / "result_ragas_v2.json"
+
+# ─── 并发控制 ───
+# 同时跑太多 retrieve+generate 会打爆 API 限流，设信号量
+RAG_CONCURRENCY = 3  # 阶段一并发数（DeepSeek + Qwen embedding 共用连接池，不宜过高）
+RAGAS_MAX_WORKERS = 12  # 阶段二 RAGAS 内部并行度
+
+
+# ─── 客观指标（关键词命中） ───
 
 def _extract_keywords(text: str) -> list[str]:
-    """从 ground_truth 里抽关键词用于命中判断。
-    策略：去停用词 + 取长度>=2的中文词/英文词。
-    不用 jieba（避免引入新依赖到 eval），用简单规则即可，够用了。"""
     if not text:
         return []
-    # 中文：连续的 2-6 字汉字串；英文：连续字母
     tokens = re.findall(r'[\u4e00-\u9fa5]{2,6}|[A-Za-z][A-Za-z0-9\-]{2,}', text)
-    # 停用词表（常见噪声词）
     stop = {
         "本文", "本文的", "我们", "通过", "使用", "采用", "基于", "方法",
         "研究", "进行", "可以", "能够", "一个", "这种", "这个", "这些",
-        "以及", "并且", "对于", "根据", "由于", "从而", "从而",
+        "以及", "并且", "对于", "根据", "由于", "从而",
         "the", "and", "for", "with", "that", "this", "are", "was",
     }
     return [t for t in tokens if t not in stop]
 
-def compute_hit_rate_and_mrr(
-    contexts: list[str],
-    ground_truth: str,
-) -> tuple[float, float]:
-    """计算单条的 Hit Rate 和 RR（倒数排名）。
-    返回 (hit_rate, reciprocal_rank)。
-    hit_rate: 1.0 命中, 0.0 未命中
-    reciprocal_rank: 1/rank, 未命中为 0"""
+
+def compute_hit_rate_and_mrr(contexts: list[str], ground_truth: str) -> tuple[float, float]:
     keywords = _extract_keywords(ground_truth)
     if not keywords:
         return 0.0, 0.0
-
     for rank, ctx in enumerate(contexts, start=1):
-        # 任一关键词出现在该 chunk 里，就算命中
         if any(kw.lower() in ctx.lower() for kw in keywords):
             return 1.0, 1.0 / rank
     return 0.0, 0.0
 
-# Windows 下强制 stdout 用 UTF-8，避免 emoji/中文报错
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-# ─── Judge LLM  用 Qwen （不同模型，消除自评偏差） ───
-judge_client = AsyncOpenAI(
-    api_key=settings.qwen_api_key,
-    base_url=settings.qwen_base_url,
-)
-
-EVAL_DIR = Path(__file__).parent
-TEST_DATASET = EVAL_DIR / "test_dataset.json"
-RESULT_FILE = EVAL_DIR / "result.json"
+def safe_float(v, default=0.0):
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return default
+    return float(v)
 
 
-# ─── 结构化评分输出 ───
-class MetricScores(BaseModel):
-    context_precision: float      # 0-1，检索结果的相关性
-    context_recall: float         # 0-1，检索的完整性
-    faithfulness: float           # 0-1，回答是否无幻觉
-    answer_relevancy: float       # 0-1，回答是否切题
-    reasoning: str                # 评分理由
+# ─── 单个用例的 RAG 链路（可并发执行） ───
 
+async def _run_single_case(
+    case: dict,
+    idx: int,
+    total: int,
+    source: str,
+    sem: asyncio.Semaphore,
+) -> dict:
+    """执行单个测试用例：检索 + 生成 + 客观指标，自动重试连接错误。"""
+    q = case["question"].strip()
+    gt = case.get("ground_truth", "").strip()
 
-# ─── 评分 Prompt ───
-JUDGE_PROMPT = """你是一个 RAG 系统的评估专家。请基于以下信息，对系统的输出进行评分。
+    async with sem:
+        print(f"\n[{idx+1}/{total}] Q: {q[:80]}")
 
-【用户问题】
-{question}
-
-【参考标准答案（如果有）】
-{ground_truth}
-
-【检索到的文档上下文】（共 {context_count} 段）
-{contexts}
-
-【系统回答】
-{answer}
-
-请按以下标准逐项打分（每项 0-10 整数，10 为满分。最终 JSON 中各项值除以 10，即填 0.0 ~ 1.0 的小数）：
-
-1. **Context Precision（上下文精确度）**：
-   检索到的文档中有多少与问题相关？无关噪声多吗？
-   10: 所有上下文都高度相关，无噪声 / 5: 部分相关，有噪声 / 0: 完全不相关
-
-2. **Context Recall（上下文覆盖度）**：
-   检索到的上下文是否包含了回答所需的所有信息？
-   10: 包含全部所需信息 / 5: 只包含部分 / 0: 完全不包含
-
-3. **Faithfulness（忠实度）**：
-   回答中的每一条事实是否都能在检索到的文档中找到依据？
-   10: 所有陈述都有依据，无编造 / 5: 部分有依据 / 0: 完全编造
-
-4. **Answer Relevancy（回答切题度）**：
-   回答是否直接回应了用户的问题？
-   10: 完全切题 / 5: 部分切题 / 0: 完全不切题
-
-严格按以下 JSON 格式输出，各项必须是 0.0 ~ 1.0 的小数：
-{{"reasoning": "理由", "context_precision": 0.X, "context_recall": 0.X, "faithfulness": 0.X, "answer_relevancy": 0.X}}
-只输出这一行 JSON，不要任何其他文字。"""
-
-def _extract_json(raw: str):
-    """多层回退提取 JSON"""
-    # 尝试 1：直接解析
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-
-    import re
-    # 尝试 2：```json ... ``` 代码块
-    m = re.search(r'```(?:json)?\s*([\s\S]*?)```', raw)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except json.JSONDecodeError:
-            pass
-
-    # 尝试 3：第一个 { 到最后一个 }（可能截断，补全）
-    m = re.search(r'\{[\s\S]*', raw)
-    if m:
-        truncated = m.group(0)
-        # 补全可能的截断 JSON
-        for fix in [truncated, truncated + '"}', truncated + '"]}', truncated + '"]}' + '"}']:
+        # 检索 + 生成（重试连接错误）
+        max_attempts = 3
+        last_error = None
+        for attempt in range(max_attempts):
             try:
-                return json.loads(fix)
-            except json.JSONDecodeError:
-                pass
+                docs = await retrieve(q, source=source)
+                contexts = [d.page_content for d in docs]
+                print(f"  Retrieved {len(contexts)} chunks (attempt {attempt+1})")
 
-    return None
+                answer = await generate(q, docs)
+                print(f"  Answer: {answer[:120]}...")
+                break
+            except Exception as e:
+                last_error = str(e)
+                is_conn_error = "Connection error" in last_error or "APIConnectionError" in last_error
+                if attempt < max_attempts - 1 and is_conn_error:
+                    wait = 2 ** attempt
+                    print(f"  ⚠ 连接错误，{wait}s 后重试 ({attempt+2}/{max_attempts})...")
+                    await asyncio.sleep(wait)
+                else:
+                    print(f"  ✗ 失败 ({max_attempts} 次): {last_error[:80]}")
+                    contexts = []
+                    answer = f"[ERROR] {last_error}"
+                    break
+        else:
+            contexts = []
+            answer = f"[ERROR] {last_error}"
 
+        hit, rr = compute_hit_rate_and_mrr(contexts, gt) if contexts else (0.0, 0.0)
+        print(f"  Hit={hit:.0f}  RR={rr:.3f}")
 
-async def judge_one(question: str, ground_truth: str, answer: str, contexts: List[str]) -> MetricScores:
-    """用 LLM 对单条结果打分"""
-    prompt = JUDGE_PROMPT.format(
-        question=question,
-        ground_truth=ground_truth or "（未提供）",
-        context_count=len(contexts),
-        contexts="\n---\n".join(f"[{i+1}] {c[:500]}" for i, c in enumerate(contexts)),
-        answer=answer,
-    )
-
-    import time
-    # 限速 + 重试，避免 API 限流返回空白
-    raw = ""
-    for attempt in range(3):
-        time.sleep(1.5)
-        response = await judge_client.chat.completions.create(
-            model=settings.judge_llm_model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=2048,  # 增大，避免 reasoning + JSON 截断
-        )
-        raw = response.choices[0].message.content or ""
-        raw = raw.strip()
-        if raw:
-            break
-        print(f"  [RETRY] empty response, attempt {attempt+1}/3")
-
-    print(f"  [DEBUG] judge raw ({len(raw)} chars): {raw[:200]}")
-
-    data = _extract_json(raw)
-
-    if data is None:
-        print(f"  [WARN] parse failed after 3 attempts")
-        return MetricScores(
-            context_precision=0.0,
-            context_recall=0.0,
-            faithfulness=0.0,
-            answer_relevancy=0.0,
-            reasoning=f"parse_failed: {raw[:200]}",
-        )
-
-    cp = float(data.get("context_precision", 0))
-    cr = float(data.get("context_recall", 0))
-    faith = float(data.get("faithfulness", 0))
-    ar = float(data.get("answer_relevancy", 0))
-
-    # 归一化：如果分数是 0-10 分制，统一除以 10 转为 0-1
-    if cp > 1.0 or cr > 1.0 or faith > 1.0 or ar > 1.0:
-        cp /= 10.0
-        cr /= 10.0
-        faith /= 10.0
-        ar /= 10.0
-
-    return MetricScores(
-        context_precision=cp,
-        context_recall=cr,
-        faithfulness=faith,
-        answer_relevancy=ar,
-        reasoning=data.get("reasoning", ""),
-    )
+    return {
+        "question": q,
+        "ground_truth": gt,
+        "answer": answer,
+        "contexts": contexts,
+        "hit_rate": hit,
+        "reciprocal_rank": rr,
+    }
 
 
 async def run_evaluation(source: str = None):
-    """主评估流程。source 不为 None 时，只在该文档内检索。"""
     # 1. 加载测试集
     with open(TEST_DATASET, "r", encoding="utf-8") as f:
         test_cases = json.load(f)
+
     tag = f" [source={source}]" if source else ""
     print(f"Loaded {len(test_cases)} test cases{tag}")
 
-    # 2. 逐条跑 RAG 链路 + 评分
-    results = []
-    scores_sum = {"context_precision": 0, "context_recall": 0, "faithfulness": 0, "answer_relevancy": 0}
-    obj_sum = {"hit_rate": 0.0, "reciprocal_rank": 0.0}
+    # ─────────────────────────────────────────────
+    # 阶段一：并行跑 RAG 链路（并发限流）
+    # ─────────────────────────────────────────────
+    sem = asyncio.Semaphore(RAG_CONCURRENCY)
+    t0 = time.time()
 
-    for i, case in enumerate(test_cases):
-        q = case["question"].strip()
-        gt = case.get("ground_truth", "").strip()
+    tasks = [
+        _run_single_case(case, i, len(test_cases), source, sem)
+        for i, case in enumerate(test_cases)
+        if case.get("question", "").strip()
+    ]
 
-        if not q:
-            continue
+    results = await asyncio.gather(*tasks)
 
-        print(f"\n{'='*60}")
-        print(f"[{i+1}/{len(test_cases)}] Q: {q}")
+    t1 = time.time()
+    phase1_elapsed = t1 - t0
+    n = len(results)
 
-        # 检索
-        docs = await retrieve(q, source=source)
-        contexts = [d.page_content for d in docs]
-        print(f"  Retrieved {len(contexts)} chunks")
+    questions = [r["question"] for r in results]
+    ground_truths = [r["ground_truth"] for r in results]
+    answers = [r["answer"] for r in results]
+    contexts_list = [r["contexts"] for r in results]
+    hit_rates = [r["hit_rate"] for r in results]
+    reciprocal_ranks = [r["reciprocal_rank"] for r in results]
 
-        # 生成
-        answer = await generate(q, docs)
-        print(f"  Answer: {answer[:120]}...")
+    print(f"\n{'='*60}")
+    print(f"阶段一完成: {n} 个用例, 耗时 {phase1_elapsed:.0f}s "
+          f"(原顺序执行约 {n * 14:.0f}s, 并发度={RAG_CONCURRENCY})")
 
-        # 客观指标
-        hit, rr = compute_hit_rate_and_mrr(contexts, gt)
-        print(f"  Hit={hit:.0f}  RR={rr:.3f}")
+    # ─────────────────────────────────────────────
+    # 阶段二：RAGAS 评分（调高内部并行度）
+    # ─────────────────────────────────────────────
+    print(f"\n{'='*60}")
+    print(f"Running RAGAS evaluation on {n} cases (max_workers={RAGAS_MAX_WORKERS})...")
+    print("  → 正在构建 HuggingFace Dataset...")
 
-        # 评分
-        scores = await judge_one(q, gt, answer, contexts)
-        print(f"  CP={scores.context_precision:.2f}  CR={scores.context_recall:.2f}  "
-              f"Faith={scores.faithfulness:.2f}  AR={scores.answer_relevancy:.2f}")
+    eval_dataset = Dataset.from_dict({
+        "question": questions,
+        "answer": answers,
+        "contexts": contexts_list,
+        "ground_truth": ground_truths,
+    })
+    print(f"  → Dataset 构建完成，共 {len(eval_dataset)} 条")
 
-        results.append({
-            "question": q,
-            "ground_truth": gt,
-            "answer": answer,
-            "contexts": contexts,
-            "hit_rate": hit,        
-            "reciprocal_rank": rr,  
-            "scores": scores.model_dump(),
+    metrics = [context_precision, context_recall, faithfulness]
+    print(f"  → 指标: {[getattr(m, 'name', str(m)) for m in metrics]}")
+
+    run_config = RunConfig(
+        max_workers=RAGAS_MAX_WORKERS,
+        max_wait=120,
+        max_retries=2,
+    )
+    print(f"  → RunConfig: max_workers={run_config.max_workers}")
+
+    t2 = time.time()
+    print(f"  → 开始评分（RAGAS 是同步调用，可能会卡住一会）...")
+    sys.stdout.flush()
+
+    # RAGAS evaluate() 是同步函数，用 asyncio.to_thread 避免阻塞事件循环
+    result = await asyncio.to_thread(
+        ragas_evaluate,
+        eval_dataset,
+        metrics=metrics,
+        llm=ragas_llm,
+        run_config=run_config,
+    )
+    t3 = time.time()
+    phase2_elapsed = t3 - t2
+
+    # ─────────────────────────────────────────────
+    # 3. 提取结果
+    # ─────────────────────────────────────────────
+    ragas_raw = result.scores
+    if isinstance(ragas_raw, dict):
+        col_names = list(ragas_raw.keys())
+        ragas_scores_list = []
+        for i in range(n):
+            row = {}
+            for col in col_names:
+                vals = ragas_raw[col]
+                row[col] = safe_float(vals[i]) if i < len(vals) else 0.0
+            ragas_scores_list.append(row)
+    else:
+        ragas_scores_list = [
+            {k: safe_float(v) for k, v in row.items()}
+            for row in ragas_raw
+        ]
+
+    detailed_results = []
+    for i in range(n):
+        row = ragas_scores_list[i] if i < len(ragas_scores_list) else {}
+        detailed_results.append({
+            "question": questions[i],
+            "ground_truth": ground_truths[i],
+            "answer": answers[i],
+            "contexts": contexts_list[i],
+            "hit_rate": hit_rates[i],
+            "reciprocal_rank": reciprocal_ranks[i],
+            "scores": {
+                "context_precision": row.get("context_precision", 0.0),
+                "context_recall": row.get("context_recall", 0.0),
+                "faithfulness": row.get("faithfulness", 0.0),
+            },
         })
 
-        for k in scores_sum:
-            scores_sum[k] += getattr(scores, k)
+    # ─────────────────────────────────────────────
+    # 4. 汇总统计
+    # ─────────────────────────────────────────────
+    avg_ragas = {}
+    for key in ["context_precision", "context_recall", "faithfulness"]:
+        vals = [r["scores"][key] for r in detailed_results]
+        avg_ragas[key] = round(sum(vals) / n, 4)
 
-        obj_sum["hit_rate"] += hit
-        obj_sum["reciprocal_rank"] += rr
+    avg_hit = round(sum(hit_rates) / n, 4) if hit_rates else 0.0
+    avg_mrr = round(sum(reciprocal_ranks) / n, 4) if reciprocal_ranks else 0.0
 
-    # 3. 汇总
-    n = len(results) or 1
-    avg = {k: round(v / n, 3) for k, v in scores_sum.items()}
-    avg_obj = {k: round(v / n, 3) for k, v in obj_sum.items()}
+    total_elapsed = t3 - t0
     summary = {
         "total_cases": n,
-        "average_scores": avg,
-        "objective_metrics": avg_obj,
-        "details": results,
+        "evaluator": "RAGAS v0.4.3",
+        "judge_llm": settings.judge_llm_model,
+        "ragas_metrics_used": ["context_precision", "context_recall", "faithfulness"],
+        "parallel_config": {
+            "rag_concurrency": RAG_CONCURRENCY,
+            "ragas_max_workers": RAGAS_MAX_WORKERS,
+        },
+        "timing_seconds": {
+            "phase1_retrieve_generate": round(phase1_elapsed, 1),
+            "phase2_ragas_scoring": round(phase2_elapsed, 1),
+            "total": round(total_elapsed, 1),
+        },
+        "average_scores": avg_ragas,
+        "objective_metrics": {
+            "hit_rate": avg_hit,
+            "mrr": avg_mrr,
+        },
+        "details": detailed_results,
     }
 
-    # 4. 保存
+    # 保存
     with open(RESULT_FILE, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
-    # 5. 输出报告
+    # 打印报告
     print(f"\n{'='*60}")
-    print("[Evaluation Report]")
+    print("[RAGAS Evaluation Report]")
+    print(f"  Evaluator: RAGAS v0.4.3")
+    print(f"  Judge LLM: {settings.judge_llm_model}")
     print(f"  Total cases: {n}")
-    print(f"  Context Precision:   {avg['context_precision']:.2%}")
-    print(f"  Context Recall:      {avg['context_recall']:.2%}")
-    print(f"  Faithfulness:        {avg['faithfulness']:.2%}")
-    print(f"  Answer Relevancy:    {avg['answer_relevancy']:.2%}")
-    print(f"  Hit Rate:            {avg_obj['hit_rate']:.2%}")
-    print(f"  MRR:                 {avg_obj['reciprocal_rank']:.3f}")
+    print(f"  ⏱  阶段一（检索+生成）: {phase1_elapsed:.0f}s (并发 {RAG_CONCURRENCY})")
+    print(f"  ⏱  阶段二（RAGAS 评分）: {phase2_elapsed:.0f}s (max_workers={RAGAS_MAX_WORKERS})")
+    print(f"  ⏱  总计: {total_elapsed:.0f}s")
+    print(f"\n  ┌──────────────────────┬──────────┐")
+    print(f"  │ Metric               │   Score  │")
+    print(f"  ├──────────────────────┼──────────┤")
+    for k, v in avg_ragas.items():
+        print(f"  │ {k:<20s} │  {v:>6.2%} │")
+    print(f"  ├──────────────────────┼──────────┤")
+    print(f"  │ {'Hit Rate':<20s} │  {avg_hit:>6.2%} │")
+    print(f"  │ {'MRR':<20s} │  {avg_mrr:>6.3f} │")
+    print(f"  └──────────────────────┴──────────┘")
     print(f"\nResults saved to: {RESULT_FILE}")
+
+    # 按类型分
+    types_in_data = [c.get("type", "unknown") for c in test_cases[:n]]
+    if any(t != "unknown" for t in types_in_data):
+        print(f"\n--- Per-type breakdown ---")
+        type_groups = {}
+        for i, t in enumerate(types_in_data):
+            type_groups.setdefault(t, []).append(detailed_results[i])
+
+        for t, group in sorted(type_groups.items()):
+            cnt = len(group)
+            avg_t = {}
+            for key in ["context_precision", "context_recall", "faithfulness"]:
+                avg_t[key] = round(sum(r["scores"][key] for r in group) / cnt, 4)
+            print(f"  [{t}] ({cnt} cases):")
+            print(f"    CP={avg_t['context_precision']:.2%}  CR={avg_t['context_recall']:.2%}  "
+                  f"Faith={avg_t['faithfulness']:.2%}")
 
 
 if __name__ == "__main__":
-    import sys
-    # 支持可选参数：python -m eval.evaluate [source_name]
     src = sys.argv[1] if len(sys.argv) > 1 else None
     asyncio.run(run_evaluation(source=src))

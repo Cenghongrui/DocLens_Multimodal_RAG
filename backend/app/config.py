@@ -1,42 +1,39 @@
+"""应用配置，启动时从 .env 加载。"""
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    """应用配置，自动从 .env 文件加载"""
-
-    # ─── LLM 配置 ───
-    # DeepSeek
-    deepseek_api_key: str  
+    # ─── LLM 供应商 ───
+    deepseek_api_key: str
     deepseek_base_url: str = "https://api.deepseek.com/v1"
 
-    # Qwen
     qwen_api_key: str
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     rerank_url: str = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
 
-    # ─── 模型参数 ───
-    llm_model: str = "deepseek-v4-flash"  
-    judge_llm_model: str = "qwen3.6-flash"
-    vision_model: str = "qwen-vl-plus"  
-    embedding_model: str = "text-embedding-v4" 
-    rerank_model: str = "qwen3-vl-rerank"  # 用于 rerank 的 LLM 模型
-    embedding_dimension: int = 1024  # text-embedding-v4 输出 1024 维
-    embedding_batch_size: int = 10  # Qwen embedding API 单次最大 10 条
+    # ─── 模型选择 ───
+    llm_model: str = "deepseek-v4-flash"            # 生成模型
+    judge_llm_model: str = "qwen3.5-flash"          # 评分/路由用
+    vision_model: str = "qwen-vl-flash"             # 图片理解
+    embedding_model: str = "text-embedding-v3"      # 向量化
+    rerank_model: str = "qwen3-vl-rerank"
+    embedding_dimension: int = 1024
+    embedding_batch_size: int = 10                  # Qwen API 上限
 
-    # ─── 分块参数 ───
-    chunk_size: int = 1000  # 每块最大字符数
-    chunk_overlap: int = 200  # 相邻块重叠字符数
+    # ─── 分片参数 ───
+    chunk_size: int = 512       # 每块最大 token 数
+    chunk_overlap: int = 128    # 相邻 chunk 尾部叠加字符数
 
     # ─── 检索参数 ───
-    top_k: int = 5  # 每次检索返回多少个结果
+    top_k: int = 3
 
-    # ─── HyDE 参数 ───
-    hyde_enabled: bool = True            # 全局开关：True=启用HyDE模块，False=完全关闭
-    hyde_route_threshold: float = 0.5   # 路由判断置信度阈值（低于此值不走HyDE）
-    hyde_model: str = "qwen3.6-flash"       # HyDE改写用的模型（轻量即可）
-    hyde_max_tokens: int = 200           # HyDE改写最大输出长度
+    # ─── HyDE ───
+    hyde_enabled: bool = True
+    hyde_route_threshold: float = 0.5
+    hyde_model: str = "qwen3.5-flash"
+    hyde_max_tokens: int = 200
 
-    # ─── 路径 ───
+    # ─── 存储路径 ───
     data_dir: str = "data/"
     image_dir: str = "images/"
     vectordb_dir: str = "vectordb/"
